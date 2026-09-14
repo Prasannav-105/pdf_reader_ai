@@ -3,7 +3,8 @@ __pycache__/
 *.py[cod]
 *.class
 
-# SQLite databases & persistent user storage
+# Local User Data & Vector Store
+data/
 *.db
 *.sqlite3
 
@@ -12,8 +13,6 @@ venv/
 .venv/
 env/
 ENV/
-env.bak/
-venv.bak/
 
 # Environment variables & secrets
 .env
@@ -27,8 +26,6 @@ temp_*/
 # IDE & Editor files
 .vscode/
 .idea/
-*.sublime-workspace
-*.sublime-project
 
 # OS generated files
 .DS_Store
