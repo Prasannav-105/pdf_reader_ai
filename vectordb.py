@@ -91,7 +91,11 @@ class VectorDBManager:
             # Generate embeddings for the batch
             embeddings = []
             for item_idx, d in enumerate(docs):
-                emb = embedder.get_embedding(d)
+                try:
+                    emb = embedder.get_embedding(d)
+                except Exception as e:
+                    print(f"Warning: Falling back for chunk {ids[item_idx]}: {e}")
+                    emb = [0.0] * 768
                 embeddings.append(emb)
                 if progress_callback:
                     curr = start_idx + item_idx + 1
