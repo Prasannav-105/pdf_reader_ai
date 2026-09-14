@@ -19,6 +19,11 @@ An intelligent, 100% offline desktop academic textbook reader and pedagogical tu
 
 - 🛡️ **Strict Anti-Hallucination Guard**: Uses retrieved textbook context exclusively. If asked questions outside the uploaded textbook, the system reliably answers:  
   `"This information is not available in the uploaded textbook."`
+- ⚡ **Google Colab-Style Compute Accelerator**: Detects available hardware across machines (System CPU, NVIDIA CUDA, AMD ROCm, Intel Arc/Xe, Apple Silicon Metal MPS) and lets students toggle between System CPU and GPU offloading (`num_gpu=0` vs `num_gpu=99`).
+- 🎧 **Offline Text-to-Speech (TTS) Narration**: Listen to textbook lessons hands-free using browser-native Web Speech synthesis with dynamic OS voice selection, adjustable playback speed (0.5x–2.0x), and play/pause controls.
+- 💻 **Verbatim Source Code & Mechanical Breakdown**: When chapters contain source code (e.g., C/C++, assembly, Python, functions like `Spin()`, `fork()`, program files like `cpu.c`), extracts full formatted code blocks and provides line-by-line mechanical execution walkthroughs directly from the book.
+- 🚀 **On-Demand Pedagogical Launchpad**: Never auto-parses or runs model inference on login without student initiation. Students browse chapters and sections freely, clicking **"Start Analyzing Section"** when ready.
+- 🔐 **Multi-User Salted Authentication**: Salted SHA-256 user authentication with user-isolated reading progress and persistent grounded Q&A chat history in SQLite.
 - 🧠 **ChromaDB Vector Store & nomic-embed-text**: Chunks textbooks with metadata (`book_name`, `unit`, `chapter`, `section`, `topic_title`, `page_number`) and indexes 768-dimensional dense embeddings in a persistent local vector database.
 - 📑 **Hierarchical Knowledge Tree**: Detects Units, Chapters, Sections, Subsections, and exact page ranges. Scalable for massive textbooks exceeding 1,000 pages with cached structures.
 - 📐 **Interactive Mermaid Architectural Diagrams**: Dynamically formulates process flows and architectural diagrams with an embedded interactive toolbar (**Zoom In +**, **Zoom Out -**, **Reset ⟲**) and auto-healing syntax repair.

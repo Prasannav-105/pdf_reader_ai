@@ -7,6 +7,7 @@ import json
 import re
 import uuid
 import streamlit as st
+import streamlit.components.v1 as components
 
 # Set page configuration
 st.set_page_config(
@@ -25,12 +26,14 @@ from vectordb import VectorDBManager
 from teacher import TeacherEngine
 from quiz_generator import QuizEngine
 from notes import StudyManager
+from auth import AuthManager
 from ui.styles import DARK_THEME_CSS
 from ui.sidebar import render_sidebar
 from ui.teaching_view import render_teaching_view
 from ui.notes_panel import render_notes_panel
 from ui.chat_drawer import render_chat_drawer
 from ui.quiz_view import render_chapter_quiz_view, render_revision_view
+from ui.pdf_viewer import render_pdf_viewer
 
 # Apply dark theme styling
 st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
@@ -54,13 +57,16 @@ def get_services():
     quiz_engine = QuizEngine(model_name="llama3.2")
     study_mgr = StudyManager(db_path=STUDY_DB_PATH)
     parser = ChapterParser(data_dir=DATA_DIR)
-    return embedder, vectordb, teacher, quiz_engine, study_mgr, parser
+    auth_mgr = AuthManager(db_path=STUDY_DB_PATH)
+    return embedder, vectordb, teacher, quiz_engine, study_mgr, parser, auth_mgr
 
-embedder, vectordb, teacher, quiz_engine, study_mgr, parser = get_services()
+embedder, vectordb, teacher, quiz_engine, study_mgr, parser, auth_mgr = get_services()
 
 # Session State Initialization
+if "user" not in st.session_state:
+    st.session_state["user"] = None
 if "user_id" not in st.session_state:
-    st.session_state["user_id"] = "student_user"
+    st.session_state["user_id"] = "guest"
 
 # Helper for book metadata
 def load_books() -> list:
@@ -155,6 +161,69 @@ if not books:
         except Exception as ex:
             print(f"Migration note: {ex}")
 
+# --- User Authentication Gate ---
+if not st.session_state.get("user"):
+    st.markdown("""
+    <div style='text-align: center; margin-top: 30px; margin-bottom: 20px;'>
+        <h1 style='font-size: 2.2rem;'>📚 AI Textbook Reader & Tutor</h1>
+        <p style='color: #94A3B8; font-size: 1.05rem;'>Offline Desktop AI Tutor Grounded Exclusively in Your Textbooks</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    auth_col1, auth_col2, auth_col3 = st.columns([1, 2, 1])
+    with auth_col2:
+        st.markdown("<div class='dark-card'>", unsafe_allow_html=True)
+        tab_login, tab_register = st.tabs(["🔑 Log In", "✨ Create Account"])
+        
+        with tab_login:
+            with st.form("login_form"):
+                l_user = st.text_input("Username or Email", placeholder="student_user")
+                l_pass = st.text_input("Password", type="password", placeholder="••••••••")
+                btn_submit_login = st.form_submit_button("Log In 🚀", use_container_width=True)
+                if btn_submit_login:
+                    user_rec = auth_mgr.authenticate_user(l_user, l_pass)
+                    if user_rec:
+                        st.session_state["user"] = user_rec
+                        st.session_state["user_id"] = user_rec["user_id"]
+                        st.success(f"Welcome back, {user_rec['username']}!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password.")
+            
+            st.markdown("<div style='text-align: center; margin: 12px 0; color: #6B7280;'>— OR —</div>", unsafe_allow_html=True)
+            if st.button("⚡ Quick Demo Student Login (1-Click)", use_container_width=True):
+                demo_user = auth_mgr.get_user_by_username("student_user")
+                if not demo_user:
+                    auth_mgr.register_user("student_user", "student@textbook.ai", "student123")
+                    demo_user = auth_mgr.authenticate_user("student_user", "student123")
+                st.session_state["user"] = demo_user
+                st.session_state["user_id"] = demo_user["user_id"]
+                st.rerun()
+
+        with tab_register:
+            with st.form("register_form"):
+                r_user = st.text_input("Choose Username", placeholder="e.g. alex_reader")
+                r_email = st.text_input("Email Address", placeholder="e.g. alex@example.com")
+                r_pass = st.text_input("Password (min 6 chars)", type="password", placeholder="••••••••")
+                btn_submit_reg = st.form_submit_button("Create Account ✨", use_container_width=True)
+                if btn_submit_reg:
+                    if len(r_pass) < 6:
+                        st.warning("Password must be at least 6 characters.")
+                    elif not r_user.strip():
+                        st.warning("Username cannot be empty.")
+                    else:
+                        ok, msg = auth_mgr.register_user(r_user.strip(), r_email.strip(), r_pass)
+                        if ok:
+                            st.success("Account created successfully! Logging in...")
+                            user_rec = auth_mgr.authenticate_user(r_user.strip(), r_pass)
+                            st.session_state["user"] = user_rec
+                            st.session_state["user_id"] = user_rec["user_id"]
+                            st.rerun()
+                        else:
+                            st.error(msg)
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
 # Check active book
 active_book_id = st.session_state.get("active_book_id")
 if not active_book_id and books:
@@ -190,8 +259,10 @@ sidebar_state = render_sidebar(
     active_book_id=active_book_id,
     hierarchy=hierarchy,
     study_mgr=study_mgr,
-    user_id=st.session_state["user_id"]
+    user_id=st.session_state["user_id"],
+    user=st.session_state.get("user")
 )
+num_gpu = sidebar_state.get("num_gpu", 0)
 
 # Handle Active Book Switch
 if sidebar_state["selected_book_id"] and sidebar_state["selected_book_id"] != active_book_id:
@@ -228,9 +299,9 @@ if sidebar_state["uploaded_files"]:
     st.session_state["active_book_id"] = books[-1]["id"]
     st.rerun()
 
-# Ensure active book is indexed in ChromaDB (lazy index on first access)
-if active_book and active_chunks:
-    if not vectordb.is_book_indexed(active_book["id"]):
+# Optional ChromaDB indexing in sidebar (only triggers on user demand or search)
+if active_book and active_chunks and not vectordb.is_book_indexed(active_book["id"]):
+    if st.sidebar.button("⚡ Index Book for Q&A Search", help="Vector index this book to enable semantic topic search and 'Ask from Book' Q&A", use_container_width=True):
         with st.sidebar.status("⚡ Indexing textbook into ChromaDB...", expanded=True) as status:
             progress_bar = st.sidebar.progress(0.0)
             def on_prog(curr, total, msg):
@@ -268,22 +339,75 @@ if not matching_chunks and active_chunks:
         {"chunk_id": active_chunks[0].chunk_id, "text": active_chunks[0].original_text, "metadata": active_chunks[0].metadata.to_dict()}
     ]
 
+# Auto-expand sidebar if browser had it collapsed
+components.html("""
+<script>
+function autoOpenSidebar() {
+    try {
+        const pDoc = window.parent.document;
+        const expandBtn = pDoc.querySelector('[data-testid="stExpandSidebarButton"] button, [data-testid="stExpandSidebarButton"], button[aria-label="Expand sidebar"]');
+        if (expandBtn) {
+            expandBtn.click();
+        }
+    } catch(e) {}
+}
+setTimeout(autoOpenSidebar, 200);
+setTimeout(autoOpenSidebar, 800);
+</script>
+""", height=0, width=0)
+
+# Top Quick Status & Navigation Bar
+hw_type_label = "🖥️ System CPU" if num_gpu == 0 else "⚡ GPU Accelerated"
+bar_col1, bar_col2 = st.columns([7, 5])
+with bar_col1:
+    st.markdown(f"""
+    <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 8px;'>
+        <span class='hardware-badge'>{hw_type_label}</span>
+        <span style='color: #94A3B8; font-size: 0.85rem;'>Active: <b style='color: #F8FAFC;'>{active_book['title'][:35]}</b></span>
+    </div>
+    """, unsafe_allow_html=True)
+with bar_col2:
+    if st.button("📂 Open Sidebar (Uploads, Hardware & Chapters)", key="btn_open_sidebar_main", use_container_width=True, help="Click to open the left contents sidebar"):
+        components.html("""
+        <script>
+        try {
+            const pDoc = window.parent.document;
+            const expandBtn = pDoc.querySelector('[data-testid="stExpandSidebarButton"] button, [data-testid="stExpandSidebarButton"], button[aria-label="Expand sidebar"]');
+            if (expandBtn) expandBtn.click();
+        } catch(e) {}
+        </script>
+        """, height=0, width=0)
+
 # Layout: 2 Columns (Center Content: 8 | Right Study Panel: 4)
 col_center, col_right = st.columns([8, 4], gap="large")
 
 with col_center:
-    if study_mode == "📖 Teaching Mode":
-        render_teaching_view(
-            teacher=teacher,
-            quiz_engine=quiz_engine,
-            study_mgr=study_mgr,
-            user_id=st.session_state["user_id"],
-            book_id=active_book["id"],
-            book_title=active_book["title"],
-            chapter_title=current_chapter,
-            section_title=current_section,
-            context_chunks=matching_chunks
-        )
+    current_page = matching_chunks[0]["metadata"].get("start_page", 1) if matching_chunks else 1
+
+    if study_mode in ["📖 Teaching Mode", "📄 PDF Reader & Annotator"]:
+        tab_tutor, tab_pdf = st.tabs(["📖 AI Pedagogical Masterclass", "📄 Original PDF Reader & Annotator"])
+        with tab_tutor:
+            render_teaching_view(
+                teacher=teacher,
+                quiz_engine=quiz_engine,
+                study_mgr=study_mgr,
+                user_id=st.session_state["user_id"],
+                book_id=active_book["id"],
+                book_title=active_book["title"],
+                chapter_title=current_chapter,
+                section_title=current_section,
+                context_chunks=matching_chunks,
+                num_gpu=num_gpu
+            )
+        with tab_pdf:
+            render_pdf_viewer(
+                book=active_book,
+                current_chapter=current_chapter,
+                current_section=current_section,
+                current_page=current_page,
+                study_mgr=study_mgr,
+                user_id=st.session_state["user_id"]
+            )
     elif study_mode == "📝 Revision Mode":
         render_revision_view(
             book_id=active_book["id"],
@@ -342,5 +466,8 @@ render_chat_drawer(
     vectordb=vectordb,
     embedder=embedder,
     book_id=active_book["id"],
-    book_title=active_book["title"]
+    book_title=active_book["title"],
+    study_mgr=study_mgr,
+    user_id=st.session_state["user_id"],
+    num_gpu=num_gpu
 )

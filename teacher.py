@@ -27,17 +27,19 @@ class TeacherEngine:
         book_title: str,
         chapter_title: str,
         section_title: str,
-        context_chunks: List[Dict[str, Any]]
+        context_chunks: List[Dict[str, Any]],
+        num_gpu: int = 0
     ) -> Generator[str, None, None]:
         """
         Streams a complete lesson for the selected section grounded strictly in the textbook chunks.
         Includes:
         1. Concept Explanation in simple language with page citations
-        2. Architectural / Process Flow Mermaid Diagram
-        3. Verbatim Textbook Quotes with page citations
-        4. Key Takeaway Points
-        5. 3 MCQs with explanations
-        6. 2 Short-Answer Conceptual Questions
+        2. Architectural / Process Flow Mermaid Diagram (Domain-specific entities only)
+        3. Formatted Source Code Blocks (when present in textbook) with line-by-line mechanics
+        4. Verbatim Textbook Quotes with page citations
+        5. Key Takeaway Points
+        6. 3 MCQs with explanations
+        7. 2 Short-Answer Conceptual Questions
         """
         # Combine retrieved textbook text with page labels
         combined_text = ""
@@ -63,20 +65,33 @@ RETRIEVED TEXTBOOK CONTENT:
 {combined_text[:4500]}
 
 INSTRUCTIONS:
-1. Teach this section sequentially in simple, clear, and engaging language.
+1. Teach this section sequentially in simple, clear, and engaging pedagogical language.
 2. Rely EXCLUSIVELY on the retrieved text above. Do not use outside knowledge.
 3. Explicitly cite the page numbers where key ideas appear (e.g., "[Page 42]").
-4. Formulate one clean, syntax-valid Mermaid diagram illustrating the core process or architecture:
+
+4. SOURCE CODE & MECHANICAL BREAKDOWN:
+   - If the retrieved text mentions, contains, or references source code (such as C/C++, Python, Java, assembly, program files like cpu.c, mem.c, threads.c, or functions like Spin(), fork(), malloc()):
+     * DO NOT merely describe the code abstractly in theoretical prose!
+     * EXTRACT and INCLUDE the complete, properly formatted source code in code blocks (e.g., ```c ... ```) exactly as printed in the textbook.
+     * Provide a line-by-line explanation of the program logic, its system calls, inputs/outputs, compilation commands (e.g., gcc), and runtime execution behavior shown in the book.
+   - If this is a non-technical book or does NOT contain code, DO NOT fabricate code; instead provide verbatim passages, case studies, or principles directly from the text.
+
+5. ARCHITECTURAL / PROCESS FLOW DIAGRAM:
+   - Formulate ONE clean, syntax-valid Mermaid flowchart illustrating the core mechanics, system calls, data flow, or concepts taught in this specific section.
+   - STRICT REQUIREMENT: DO NOT use generic placeholder words like "Input Concept", "Processing Step", "Output Result", "A", "B", "C".
+   - You MUST use the actual technical entities, functions, or concepts from this chapter (e.g., OS Kernel, Hardware CPU, Timer Interrupt, Process State, Virtual Memory, Cache, etc.).
+   - Format strictly as:
 ```mermaid
 graph TD
-    A["Input Concept"] --> B["Processing Step"]
-    B --> C["Output Result"]
+    Node1["Descriptive Technical Entity 1"] -->|action| Node2["Descriptive Technical Entity 2"]
+    Node2 --> Node3["Descriptive Technical Entity 3"]
 ```
-5. Include one prominent verbatim textbook excerpt using markdown blockquote:
+
+6. Include one prominent verbatim textbook excerpt using markdown blockquote:
 > [!NOTE] Verbatim Textbook Passage (Page X)
 > "Exact quotation from the text..."
 
-6. End the lesson with:
+7. End the lesson with:
 ### 📌 Key Takeaways
 - Point 1 (Page X)
 - Point 2 (Page Y)
@@ -117,7 +132,7 @@ graph TD
                 {"role": "user", "content": user_prompt}
             ],
             stream=True,
-            options={"temperature": 0.2, "top_p": 0.9}
+            options={"temperature": 0.2, "top_p": 0.9, "num_gpu": num_gpu}
         )
 
         for chunk in response_stream:
@@ -130,7 +145,8 @@ graph TD
         book_title: str,
         question: str,
         retrieved_chunks: List[Dict[str, Any]],
-        chat_history: Optional[List[Dict[str, str]]] = None
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        num_gpu: int = 0
     ) -> Generator[str, None, None]:
         """
         Answers user queries strictly from retrieved textbook chunks.
@@ -152,8 +168,6 @@ graph TD
             citations.append(f"Pages {s_p}-{e_p} ({chap})")
             combined_context += f"\n[Context Chunk {i+1} - Pages {s_p}-{e_p}]:\n" + c.get("text", "")
 
-        citation_str = "; ".join(set(citations))
-
         user_prompt = f"""
 QUESTION:
 {question}
@@ -166,12 +180,15 @@ STRICT RULES:
 2. If the context does not explicitly contain the answer, reply EXACTLY with:
 "This information is not available in the uploaded textbook."
 3. If the context does contain the answer, explain it concisely and cite the exact page numbers (e.g. "[Page 24]").
-4. Do not speculate or draw upon general knowledge.
+4. If the question asks about source code, program implementation, or code files from the textbook (e.g. cpu.c, mem.c, threads.c, Spin(), fork()):
+   * Output the exact code snippet in a markdown code block (e.g., ```c ... ```) from the context.
+   * Provide a clear line-by-line mechanical explanation of how the code operates according to the textbook.
+5. Do not speculate or draw upon outside general knowledge.
 """
 
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         if chat_history:
-            # Include last 2 turns of history
+            # Include last 4 turns of history
             for msg in chat_history[-4:]:
                 messages.append(msg)
         messages.append({"role": "user", "content": user_prompt})
@@ -180,7 +197,7 @@ STRICT RULES:
             model=self.model_name,
             messages=messages,
             stream=True,
-            options={"temperature": 0.1, "top_p": 0.8}
+            options={"temperature": 0.1, "top_p": 0.8, "num_gpu": num_gpu}
         )
 
         for chunk in response_stream:
@@ -192,12 +209,12 @@ STRICT RULES:
     def sanitize_mermaid(code: str) -> str:
         """
         Auto-healing Mermaid sanitizer.
-        Removes markdown fences, deduplicates duplicate headers, and quotes node labels.
+        Removes markdown fences, deduplicates duplicate headers, and properly quotes node labels.
         """
         if not code:
             return ""
         # Remove opening and closing backticks
-        code = re.sub(r'^```(?:mermaid)?\s*', '', code.strip(), flags=re.MULTILINE)
+        code = re.sub(r'```(?:mermaid)?\s*', '', code.strip(), flags=re.MULTILINE)
         code = re.sub(r'```\s*$', '', code.strip(), flags=re.MULTILINE)
 
         lines = [l.rstrip() for l in code.splitlines() if l.strip()]
@@ -206,7 +223,7 @@ STRICT RULES:
 
         # Ensure valid header
         first_line = lines[0].strip()
-        valid_prefixes = ("graph TD", "graph LR", "flowchart TD", "flowchart LR", "sequenceDiagram", "classDiagram")
+        valid_prefixes = ("graph TD", "graph LR", "flowchart TD", "flowchart LR", "sequenceDiagram", "classDiagram", "stateDiagram")
         if not any(first_line.startswith(p) for p in valid_prefixes):
             lines.insert(0, "graph TD")
 
@@ -218,10 +235,10 @@ STRICT RULES:
                 continue
             deduped.append(l)
 
-        # Ensure node labels with spaces are quoted: A[Label Here] -> A["Label Here"]
+        # Ensure node labels with spaces or text are properly quoted: A[Label Here] -> A["Label Here"]
         cleaned_lines = []
         for l in deduped:
-            cleaned = re.sub(r'(\w+)\[([^"\]]+)\]', r'[""]', l)
+            cleaned = re.sub(r'(\b\w+)\[([^"\]\n]+)\]', r'\1["\2"]', l)
             cleaned_lines.append(cleaned)
 
         return "\n".join(cleaned_lines)

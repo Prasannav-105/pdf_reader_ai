@@ -7,22 +7,54 @@ import streamlit as st
 from typing import Dict, Any, List, Optional
 from models.schema import BookHierarchy, HierarchicalNode
 from notes import StudyManager
+from hardware import get_hardware_info, get_hardware_options
 
 def render_sidebar(
     books: List[Dict[str, Any]],
     active_book_id: Optional[str],
     hierarchy: Optional[BookHierarchy],
     study_mgr: StudyManager,
-    user_id: str
+    user_id: str,
+    user: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Renders left sidebar with:
+    - User Profile & Logout
+    - Google Colab-style Compute Hardware Accelerator Selector (CPU / GPU)
     - Book Selector & PDF Upload
     - Mode Selection (Teaching / Revision / Quiz / Search)
     - Continue Reading quick jump
     - Hierarchical Navigator (Unit -> Chapter -> Section)
     """
     st.sidebar.markdown("## 📚 AI Textbook Reader")
+
+    # 0. User Profile Badge & Logout
+    if user:
+        u_col1, u_col2 = st.sidebar.columns([3, 1])
+        with u_col1:
+            st.sidebar.markdown(f"<div class='user-profile-badge'>👤 <b>{user.get('username', user_id)}</b></div>", unsafe_allow_html=True)
+        with u_col2:
+            if st.sidebar.button("🚪 Logout", key="sb_logout_btn", help="Log out of account"):
+                st.session_state["user"] = None
+                st.session_state["user_id"] = "guest"
+                st.rerun()
+
+    # 1. Hardware Accelerator Selector (Colab Style)
+    hw_options = get_hardware_options()
+    name_map = {opt["name"]: opt.get("num_gpu", 0) for opt in hw_options}
+    opt_labels = list(name_map.keys())
+
+    selected_hw = st.sidebar.selectbox(
+        "⚡ Compute Accelerator:",
+        options=opt_labels,
+        index=0,
+        help="Switch between System CPU and GPU inference just like Google Colab",
+        key="sel_compute_hw"
+    )
+    num_gpu = name_map.get(selected_hw, 0)
+    badge_label = "CPU Mode" if num_gpu == 0 else "GPU Accelerated"
+    st.sidebar.markdown(f"<span class='hardware-badge'>⚡ {badge_label}</span>", unsafe_allow_html=True)
+    st.sidebar.markdown("---")
 
     # 1. Book Selector
     book_options = {b["id"]: b["title"] for b in books}
@@ -54,7 +86,7 @@ def render_sidebar(
     st.sidebar.markdown("### 🎯 Learning Mode")
     study_mode = st.sidebar.radio(
         "Select Mode:",
-        ["📖 Teaching Mode", "📝 Revision Mode", "🎯 Chapter Quiz", "🔍 Search by Topic"],
+        ["📖 Teaching Mode", "📄 PDF Reader & Annotator", "📝 Revision Mode", "🎯 Chapter Quiz", "🔍 Search by Topic"],
         key="radio_study_mode"
     )
 
@@ -125,5 +157,7 @@ def render_sidebar(
         "study_mode": study_mode,
         "chapter": selected_chapter,
         "section": selected_section,
-        "active_node": selected_node
+        "active_node": selected_node,
+        "num_gpu": num_gpu,
+        "compute_device": selected_hw
     }

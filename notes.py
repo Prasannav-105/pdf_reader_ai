@@ -86,6 +86,17 @@ class StudyManager:
                     taken_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    book_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    sources TEXT DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     # --- Notes ---
@@ -223,3 +234,42 @@ class StudyManager:
                 ORDER BY id DESC
             """, (user_id, book_id))
             return [dict(row) for row in cur.fetchall()]
+
+    # --- Grounded Q&A Chat History ---
+    def save_chat_message(self, user_id: str, book_id: str, role: str, content: str, sources: Optional[List[str]] = None) -> int:
+        """Saves a grounded chat message to persistent SQLite database."""
+        with self._get_conn() as conn:
+            cur = conn.execute("""
+                INSERT INTO chat_history (user_id, book_id, role, content, sources)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, book_id, role, content, json.dumps(sources or [])))
+            conn.commit()
+            return cur.lastrowid
+
+    def get_chat_history(self, user_id: str, book_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieves recent chat messages for a user and specific book."""
+        with self._get_conn() as conn:
+            cur = conn.execute("""
+                SELECT role, content, sources, created_at FROM chat_history
+                WHERE user_id = ? AND book_id = ?
+                ORDER BY id ASC
+                LIMIT ?
+            """, (user_id, book_id, limit))
+            res = []
+            for row in cur.fetchall():
+                d = dict(row)
+                try:
+                    d["sources"] = json.loads(d.get("sources") or "[]")
+                except Exception:
+                    d["sources"] = []
+                res.append(d)
+            return res
+
+    def clear_chat_history(self, user_id: str, book_id: str):
+        """Clears all chat history for a specific user and book."""
+        with self._get_conn() as conn:
+            conn.execute("""
+                DELETE FROM chat_history WHERE user_id = ? AND book_id = ?
+            """, (user_id, book_id))
+            conn.commit()
+
